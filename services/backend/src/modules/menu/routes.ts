@@ -1,0 +1,63 @@
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import type { Db } from "../../db/client";
+import { createMenuItemInputSchema, updateMenuItemInputSchema, menuResponseSchema, menuItemSelectSchema } from "./schemas";
+import * as menuService from "./service";
+
+type Env = { Variables: { db: Db } };
+export const menuRoutes = new OpenAPIHono<Env>();
+
+menuRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/menu",
+    tags: ["menu"],
+    responses: { 200: { description: "Menu", content: { "application/json": { schema: menuResponseSchema } } } },
+  }),
+  async (c) => c.json(await menuService.getMenu(c.get("db")), 200)
+);
+
+menuRoutes.openapi(
+  createRoute({
+    method: "post",
+    path: "/menu/items",
+    tags: ["menu"],
+    request: { body: { content: { "application/json": { schema: createMenuItemInputSchema } } } },
+    responses: { 201: { description: "Created", content: { "application/json": { schema: menuItemSelectSchema } } } },
+  }),
+  async (c) => c.json(await menuService.createMenuItem(c.get("db"), c.req.valid("json")), 201)
+);
+
+menuRoutes.openapi(
+  createRoute({
+    method: "patch",
+    path: "/menu/items/{id}",
+    tags: ["menu"],
+    request: {
+      params: z.object({ id: z.string().uuid() }),
+      body: { content: { "application/json": { schema: updateMenuItemInputSchema } } },
+    },
+    responses: { 200: { description: "Updated", content: { "application/json": { schema: menuItemSelectSchema } } } },
+  }),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    return c.json(await menuService.updateMenuItem(c.get("db"), id, c.req.valid("json")), 200);
+  }
+);
+
+menuRoutes.openapi(
+  createRoute({
+    method: "patch",
+    path: "/menu/items/{id}/availability",
+    tags: ["menu"],
+    request: {
+      params: z.object({ id: z.string().uuid() }),
+      body: { content: { "application/json": { schema: z.object({ isAvailable: z.boolean() }) } } },
+    },
+    responses: { 200: { description: "Updated", content: { "application/json": { schema: menuItemSelectSchema } } } },
+  }),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const { isAvailable } = c.req.valid("json");
+    return c.json(await menuService.setMenuItemAvailability(c.get("db"), id, isAvailable), 200);
+  }
+);
