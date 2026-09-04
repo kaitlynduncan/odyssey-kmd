@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@babel/runtime": "^8.0.0",
+    "@expo/metro-runtime": "~3.2.3",
     "@tanstack/react-query": "^5.55.0",
     "api-client": "workspace:*",
     "expo": "~51.0.0",

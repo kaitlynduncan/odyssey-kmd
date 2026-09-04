@@ -5,17 +5,12 @@ import { Badge } from "@/components/primitives/Badge";
 import { Button } from "@/components/primitives/Button";
 import { Drawer } from "@/components/primitives/Modal";
 import { Input } from "@/components/primitives/Input";
-import { Select } from "@/components/primitives/Select";
-import { Toggle } from "@/components/primitives/Toggle";
 import { SkeletonRows } from "@/components/primitives/Skeleton";
 import { StatePanel } from "@/components/primitives/StatePanel";
 import { useGetApiMenu } from "api-client";
 import { useMenuActions } from "@/features/menu/hooks/useMenuActions";
 import { formatCents } from "shared/src/money";
 import { color, spacing, typography } from "@/theme/tokens";
-import { sanitizePriceInput } from "@/lib/priceInput";
-
-const NEW_CATEGORY_VALUE = "__new__";
 
 type EditingItem = {
   id?: string;
@@ -23,15 +18,13 @@ type EditingItem = {
   name: string;
   description: string;
   priceCents: number;
-  priceInput: string;
   isAvailable: boolean;
 };
 
 export default function MenuPage() {
   const { data: response, isLoading, isError, refetch } = useGetApiMenu();
-  const { saveItem, createCategory, isSaving, isCreatingCategory } = useMenuActions();
+  const { saveItem, isSaving } = useMenuActions();
   const [editing, setEditing] = useState<EditingItem | null>(null);
-  const [newCategoryName, setNewCategoryName] = useState("");
 
   const categories = response?.data?.categories ?? [];
   const items = response?.data?.items ?? [];
@@ -40,47 +33,24 @@ export default function MenuPage() {
   const byCategory = new Map<string, any[]>();
   items.forEach((i: any) => byCategory.set(i.categoryId, [...(byCategory.get(i.categoryId) ?? []), i]));
 
-  const categoryOptions = [
-    ...categories.map((c: any) => ({ label: c.name, value: c.id })),
-    { label: "+ New category…", value: NEW_CATEGORY_VALUE },
-  ];
-
   function openCreate() {
-    setNewCategoryName("");
-    setEditing({
-      categoryId: categories[0]?.id ?? "",
-      name: "",
-      description: "",
-      priceCents: 0,
-      priceInput: "",
-      isAvailable: true,
-    });
+    setEditing({ categoryId: categories[0]?.id ?? "", name: "", description: "", priceCents: 0, isAvailable: true });
   }
 
   function openEdit(item: any) {
-    setNewCategoryName("");
     setEditing({
       id: item.id,
       categoryId: item.categoryId,
       name: item.name,
       description: item.description ?? "",
       priceCents: item.priceCents,
-      priceInput: (item.priceCents / 100).toFixed(2),
       isAvailable: item.isAvailable,
     });
   }
 
-  async function handleSave() {
+  function handleSave() {
     if (!editing) return;
-    const priceCents = Math.round(parseFloat(editing.priceInput || "0") * 100);
-
-    let categoryId = editing.categoryId;
-    if (categoryId === NEW_CATEGORY_VALUE) {
-      if (!newCategoryName.trim()) return;
-      categoryId = await createCategory(newCategoryName.trim());
-    }
-
-    saveItem({ ...editing, categoryId, priceCents });
+    saveItem(editing);
     setEditing(null);
   }
 
@@ -88,7 +58,7 @@ export default function MenuPage() {
     <ScrollView>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.xl }}>
         <Text style={typography.display}>Menu</Text>
-        <Button label="Add item" onPress={openCreate} />
+        <Button label="Add item" onPress={openCreate} disabled={categories.length === 0} />
       </View>
 
       {isLoading ? (
@@ -144,39 +114,20 @@ export default function MenuPage() {
         footer={
           <>
             <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-            <Button label="Save" loading={isSaving || isCreatingCategory} onPress={handleSave} />
+            <Button label="Save" loading={isSaving} onPress={handleSave} />
           </>
         }
       >
         {editing && (
           <>
-            <Select
-              label="Category"
-              value={editing.categoryId}
-              options={categoryOptions}
-              onChange={(v) => setEditing({ ...editing, categoryId: v })}
-            />
-            {editing.categoryId === NEW_CATEGORY_VALUE && (
-              <Input
-                label="New category name"
-                value={newCategoryName}
-                onChangeText={setNewCategoryName}
-                placeholder="e.g. Desserts"
-              />
-            )}
-
             <Input label="Name" value={editing.name} onChangeText={(v) => setEditing({ ...editing, name: v })} placeholder="e.g. Margherita Pizza" />
             <Input label="Description" value={editing.description} onChangeText={(v) => setEditing({ ...editing, description: v })} placeholder="Short description shown on the menu" />
             <Input
               label="Price (USD)"
-              value={editing.priceInput}
-                            onChangeText={(v) => setEditing({ ...editing, priceInput: sanitizePriceInput(v) })}
+              value={editing.priceCents ? (editing.priceCents / 100).toString() : ""}
+              onChangeText={(v) => setEditing({ ...editing, priceCents: Math.round(parseFloat(v || "0") * 100) })}
               placeholder="0.00"
             />
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={typography.bodyStrong}>Available</Text>
-              <Toggle value={editing.isAvailable} onValueChange={(v) => setEditing({ ...editing, isAvailable: v })} />
-            </View>
           </>
         )}
       </Drawer>

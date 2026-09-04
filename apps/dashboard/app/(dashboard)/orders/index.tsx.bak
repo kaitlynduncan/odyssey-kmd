@@ -25,10 +25,10 @@ export default function OrdersPage() {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTER_OPTIONS)[number]["value"]>("all");
 
-  const { data: response, isLoading, isError, refetch } = useGetApiOrders(
+  const { data, isLoading, isError, refetch } = useGetApiOrders(
     statusFilter === "all" ? {} : { status: statusFilter as any }
   );
-  const orders = response?.data?.data ?? [];
+  const orders = data?.data ?? [];
 
   const columns: Column<GetApiOrders200DataItem>[] = [
     { key: "id", header: "Order", width: 100, render: (o) => <Text style={typography.bodyStrong}>#{o.id.slice(0, 6)}</Text> },

@@ -11,7 +11,7 @@ export default defineConfig({
       schemas: "./src/generated/models",
       client: "react-query",
       httpClient: "fetch",
-      baseUrl: process.env.API_BASE_URL ?? "http://localhost:8787",
+      baseUrl: process.env.API_BASE_URL ?? "http://localhost:8787/api",
       override: {
         query: {
           useQuery: true,

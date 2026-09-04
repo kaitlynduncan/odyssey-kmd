@@ -16,6 +16,11 @@ export async function createMenuItem(db: Db, input: CreateMenuItemInput) {
   return item;
 }
 
+export async function createMenuCategory(db: Db, input: { name: string; sortOrder?: number }) {
+  const [category] = await db.insert(menuCategories).values(input).returning();
+  return category;
+}
+
 export async function updateMenuItem(db: Db, id: string, input: UpdateMenuItemInput) {
   const [item] = await db
     .update(menuItems)

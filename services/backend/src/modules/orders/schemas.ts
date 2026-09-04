@@ -1,6 +1,6 @@
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
-import { orders, orderItems, orderStatusEvents } from "../../db/schema";
+import { orders, orderItems, orderStatusEvents, customers } from "../../db/schema";
 
 // Base shapes are derived from the Drizzle table definitions. Do not
 // hand-write parallel interfaces for these — extend what drizzle-zod gives you.
@@ -9,6 +9,12 @@ export const orderItemSelectSchema = createSelectSchema(orderItems);
 export const orderStatusEventSelectSchema = createSelectSchema(orderStatusEvents);
 
 export const orderStatusSchema = orderSelectSchema.shape.status;
+
+// Minimal customer summary embedded in order responses so the frontend can
+// render a name without a second request. Null for walk-in/guest orders.
+export const orderCustomerSummarySchema = createSelectSchema(customers)
+  .pick({ id: true, name: true })
+  .nullable();
 
 // ---- Request schemas -------------------------------------------------------
 
@@ -42,6 +48,7 @@ export const listOrdersQuerySchema = z.object({
 
 export const orderWithItemsSchema = orderSelectSchema.extend({
   items: z.array(orderItemSelectSchema),
+  customer: orderCustomerSummarySchema,
 });
 
 export const orderListResponseSchema = z.object({

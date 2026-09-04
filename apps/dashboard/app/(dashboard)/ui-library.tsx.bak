@@ -4,7 +4,6 @@ import { Card } from "@/components/primitives/Card";
 import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
 import { Select } from "@/components/primitives/Select";
-import { Toggle } from "@/components/primitives/Toggle";
 import { Badge } from "@/components/primitives/Badge";
 import { Skeleton, SkeletonRows } from "@/components/primitives/Skeleton";
 import { StatePanel } from "@/components/primitives/StatePanel";
@@ -24,7 +23,6 @@ export default function UiLibraryPage() {
   const toast = useToast();
   const [selectValue, setSelectValue] = useState<"a" | "b" | "c">("a");
   const [inputValue, setInputValue] = useState("");
-  const [toggleValue, setToggleValue] = useState(true);
 
   return (
     <ScrollView>
@@ -84,6 +82,10 @@ export default function UiLibraryPage() {
           <Input label="With error" value="" onChangeText={() => {}} error="This field is required" />
           <Input label="Disabled" value="Can't edit this" onChangeText={() => {}} disabled />
           <Select label="Select" value={selectValue} onChange={setSelectValue} options={[{ label: "Option A", value: "a" }, { label: "Option B", value: "b" }, { label: "Option C", value: "c" }]} />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+            <Toggle value={toggleValue} onValueChange={setToggleValue} />
+            <Text style={typography.body}>Toggle ({toggleValue ? "on" : "off"})</Text>
+          </View>
         </Card>
       </Section>
 

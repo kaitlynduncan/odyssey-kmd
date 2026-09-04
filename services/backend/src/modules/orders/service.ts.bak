@@ -137,7 +137,7 @@ export async function listOrders(
   const [rows, [{ total }]] = await Promise.all([
     db.query.orders.findMany({
       where,
-      with: { items: true, customer: { columns: { id: true, name: true } } },
+      with: { items: true },
       orderBy: desc(orders.createdAt),
       limit: filters.pageSize,
       offset: (filters.page - 1) * filters.pageSize,
@@ -153,7 +153,6 @@ export async function getOrderById(db: Db, orderId: string) {
     where: eq(orders.id, orderId),
     with: {
       items: true,
-      customer: { columns: { id: true, name: true } },
       statusEvents: { orderBy: (e, { asc }) => [asc(e.createdAt)] },
     },
   });

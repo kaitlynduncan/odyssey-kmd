@@ -150,3 +150,7 @@ export const orderItemsRelations = relations(orderItems, ({ one }) => ({
   order: one(orders, { fields: [orderItems.orderId], references: [orders.id] }),
   menuItem: one(menuItems, { fields: [orderItems.menuItemId], references: [menuItems.id] }),
 }));
+
+export const orderStatusEventsRelations = relations(orderStatusEvents, ({ one }) => ({
+  order: one(orders, { fields: [orderStatusEvents.orderId], references: [orders.id] }),
+}));

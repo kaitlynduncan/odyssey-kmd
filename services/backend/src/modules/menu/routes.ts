@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import type { Db } from "../../db/client";
-import { createMenuItemInputSchema, updateMenuItemInputSchema, menuResponseSchema, menuItemSelectSchema } from "./schemas";
+import { createMenuItemInputSchema, updateMenuItemInputSchema, menuResponseSchema, menuItemSelectSchema, createMenuCategoryInputSchema, menuCategorySelectSchema } from "./schemas";
 import * as menuService from "./service";
 
 type Env = { Variables: { db: Db } };
@@ -60,4 +60,15 @@ menuRoutes.openapi(
     const { isAvailable } = c.req.valid("json");
     return c.json(await menuService.setMenuItemAvailability(c.get("db"), id, isAvailable), 200);
   }
+);
+
+menuRoutes.openapi(
+  createRoute({
+    method: "post",
+    path: "/menu/categories",
+    tags: ["menu"],
+    request: { body: { content: { "application/json": { schema: createMenuCategoryInputSchema } } } },
+    responses: { 201: { description: "Created", content: { "application/json": { schema: menuCategorySelectSchema } } } },
+  }),
+  async (c) => c.json(await menuService.createMenuCategory(c.get("db"), c.req.valid("json")), 201)
 );

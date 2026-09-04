@@ -22,7 +22,7 @@ export function Table<T>({ columns, rows, keyExtractor, onRowPress }: TableProps
       <View style={[styles.row, styles.headerRow]}>
         {columns.map((col) => (
           <View key={col.key} style={{ width: col.width ?? undefined, flex: col.width ? undefined : 1 }}>
-            <Text style={[typography.label, { color: color.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }]}>{col.header}</Text>
+            <Text style={[typography.label, { color: color.textMuted }]}>{col.header}</Text>
           </View>
         ))}
       </View>

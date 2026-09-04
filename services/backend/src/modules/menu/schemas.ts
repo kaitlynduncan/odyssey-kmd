@@ -10,6 +10,11 @@ export const createMenuItemInputSchema = createInsertSchema(menuItems, {
   priceCents: z.number().int().positive(),
 }).omit({ id: true, createdAt: true, updatedAt: true });
 
+export const createMenuCategoryInputSchema = createInsertSchema(menuCategories).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const updateMenuItemInputSchema = createMenuItemInputSchema.partial();
 
 export const menuItemWithCategorySchema = menuItemSelectSchema.extend({
