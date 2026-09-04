@@ -8,7 +8,7 @@ One rule drives every decision below: **the database schema is the only place a 
 Drizzle schema → drizzle-zod → Hono + OpenAPI → Orval → React Query hooks
 ```
 
-This also gives a natural review checklist for the assignment's grading criteria: "contract discipline" == can you trace any field on screen back to a single `column()` call in `services/backend/src/db/schema.ts`.
+This also gives a natural review checklist: "contract discipline" == can you trace any field on screen back to a single `column()` call in `services/backend/src/db/schema.ts`.
 
 ## 2. Repo layout
 
@@ -28,18 +28,13 @@ apps/dashboard/                 Expo + React Native + Web
       ui-library.tsx            design system showcase route
   src/
     components/
-      primitives/                Button, Input, Select, Modal, Card, Table, Badge, Toast, Skeleton, Nav...
-      composed/                  OrderStatusBadge, MenuItemCard, CustomerRow, KpiCard...
+      primitives/                Button, Input, Select, Toggle, Modal, Card, Badge, Toast, Skeleton, Table, Sidebar, StatePanel
+      composed/                  OrderStatusBadge, KpiCard
     features/
-      orders/
-        hooks/                   thin wrappers around generated Orval hooks + local UI state
-        components/              order-specific composed UI (StatusActionMenu, OrderDrawer)
-      menu/
-      crm/
-      settings/
-      home/
-    theme/                       token definitions, ThemeProvider
-    lib/                         query client setup, toast bus, navigation helpers
+      orders/hooks/              useOrderActions — wraps generated status-update mutation
+      menu/hooks/                useMenuActions — wraps generated item/category mutations
+    theme/                       token definitions
+    lib/                         query client, price-input sanitizer
   tests/
 
 services/backend/                Hono on Cloudflare Workers
@@ -49,49 +44,33 @@ services/backend/                Hono on Cloudflare Workers
       client.ts
       seed.ts
     modules/
-      menu/
-        schemas.ts                drizzle-zod derived + request/response refinements
-        routes.ts                 Hono OpenAPI route defs
-        service.ts                business logic (availability checks, price calc)
-      orders/
-        schemas.ts
-        routes.ts
-        service.ts                state machine, total calc, validation
-      customers/
-      settings/
-    openapi/
-      registry.ts                 builds the OpenAPI document from route defs
+      menu/ orders/ customers/ settings/    each: schemas.ts, routes.ts, service.ts
     app.ts                        composes modules into the Hono app
     index.ts                      Worker entry
   drizzle/                        migrations
-  tests/
+  tests/                          integration tests against a real Postgres test DB
 
 packages/
-  shared/                         cross-cutting UI-agnostic utilities (money formatting, date helpers)
-  types/                          hand-authored types ONLY for things with no DB shape (e.g. UI enums for filter state) — never for API payloads
-  api-client/                     Orval output lands here: generated fetch client + React Query hooks (git-ignored or committed, see §7)
-
-turbo.json
-pnpm-workspace.yaml
+  shared/                         cross-cutting UI-agnostic utilities (money formatting, order-status transition map)
+  types/                          hand-authored types ONLY for things with no DB shape
+  api-client/                     Orval output lands here: generated fetch client + React Query hooks
 ```
-
-`packages/types` is intentionally small and its README should say explicitly: *"if it describes a backend resource, it does not belong here — it belongs in the generated client."*
 
 ## 3. Data model (Drizzle schema)
 
-Minimum tables to support the required flows:
-
 | Table | Key columns | Notes |
 |---|---|---|
-| `menu_categories` | id, name, sort_order | |
+| `menu_categories` | id, name, sort_order | created via `POST /menu/categories`, in addition to being seeded |
 | `menu_items` | id, category_id, name, description, price_cents, is_available, image_url | price stored as integer cents — never floats |
 | `customers` | id, name, email, phone, created_at | |
 | `orders` | id, customer_id (nullable — walk-in), status, subtotal_cents, tax_cents, total_cents, created_at, updated_at | totals are **computed server-side on creation**, never trusted from client |
 | `order_items` | id, order_id, menu_item_id, name_snapshot, unit_price_cents_snapshot, quantity | snapshot fields so historical orders don't change if a menu item's price changes later |
-| `order_status_events` | id, order_id, from_status, to_status, created_at | audit trail — this is what makes status changes "deliberate backend behavior" rather than a loose field write |
-| `settings` | id (singleton row or key/value), prep_time_minutes, auto_accept, is_accepting_orders, opening_hours(jsonb) | |
+| `order_status_events` | id, order_id, from_status, to_status, created_at | audit trail for every status change |
+| `settings` | id (singleton row), prep_time_minutes, auto_accept, is_accepting_orders, opening_hours (jsonb, typed via `.$type<OpeningHours>()`) | |
 
-`order_status_events` is the detail most likely to separate a strong submission from an average one — it's cheap to build and directly answers the "do not make status updates a loose client-controlled field change" requirement.
+**Gotcha worth knowing**: Drizzle's relational query API (`db.query.orders.findMany({ with: {...} })`) requires the relation to be declared on *both* sides via `relations()` — declaring `orders.statusEvents` without also declaring `orderStatusEvents.order` (the back-reference) produces a runtime "not enough information to infer relation" error, not a compile-time one. Every table with a foreign key needs its own `relations()` export.
+
+**Another gotcha**: `jsonb` columns are typed as `unknown` by Drizzle unless you attach `.$type<T>()` to the column definition. Without it, the raw DB row won't structurally match a more specific Zod/OpenAPI response schema, and `tsc` will only catch this once something actually tries to return that row from a route handler.
 
 ### Order status state machine
 
@@ -101,52 +80,43 @@ pending → accepted → preparing → ready → completed
 cancelled  cancelled
 ```
 
-Enforced in `orders/service.ts` via a transition map (`Record<Status, Status[]>`), not in the route handler and not on the client. The route calls `service.transitionStatus(orderId, targetStatus)`; the service is the only thing allowed to write `orders.status`, and every write also inserts an `order_status_events` row. Invalid transitions return `409` with a typed error body, not a silent no-op.
+Enforced in `orders/service.ts` via a transition map (`Record<Status, Status[]>`), imported from `packages/shared` so the frontend reads the *same* authority to decide which status actions to show — it doesn't reimplement the rule, and the backend re-validates on every request regardless of what the UI offers. Every write also inserts an `order_status_events` row.
 
 ## 4. Backend (Hono on Cloudflare Workers)
 
-- **Module-per-resource** structure (menu / orders / customers / settings), each with `schemas.ts` (drizzle-zod derived, extended for request-only fields like pagination), `routes.ts` (Hono OpenAPI handlers, thin), `service.ts` (business logic, testable in isolation from HTTP).
-- **Validation**: every route uses the drizzle-zod-derived schema as its `zValidator` input — reject invalid payloads at the edge before touching the service layer.
-- **Business rules enforced server-side, always**:
-  - reject orders containing unavailable menu items (check `is_available` at order-creation time, not just on menu display)
-  - compute `subtotal/tax/total` server-side from current menu prices; if a client sends a total, ignore it (or validate it matches and reject with a clear error if not — pick one and document the choice)
-  - order status transitions go through the state machine above
-- **OpenAPI generation**: use `@hono/zod-openapi` so route definitions produce the spec directly from the same Zod schemas used for validation — one definition, not two.
-- `pnpm gen:contract` runs the Worker locally (or a script that imports the Hono app directly), dumps `openapi.json`, then runs Orval against it into `packages/api-client`.
+- **Module-per-resource** structure (menu / orders / customers / settings).
+- **Postgres driver**: `node-postgres` (`pg`), not a Workers-native HTTP driver. This needs `compatibility_flags = ["nodejs_compat"]` in `wrangler.toml` (and a recent `compatibility_date`) to resolve Node built-ins (`net`, `tls`, `dns`, `crypto`, etc.) inside the Workers runtime. A from-scratch Cloudflare deploy would need a [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) binding in front of Postgres (works with `pg` unchanged), or swapping to a Workers-native HTTP driver against a hosted Postgres.
+- **Validation**: every route uses the drizzle-zod-derived schema as its `zValidator` input.
+- **Business rules enforced server-side, always**: unavailable menu items rejected at order-creation time; totals computed server-side from current menu prices; status transitions go through the state machine.
+- **OpenAPI generation**: `@hono/zod-openapi` produces the spec directly from the same Zod schemas used for validation.
 
 ## 5. Frontend (Expo + React Native + Web)
 
-- **Data layer**: only Orval-generated hooks touch the network. Feature-level hooks (`features/orders/hooks/useOrderActions.ts`) wrap generated hooks to add UI-specific behavior (optimistic updates, toast on success/error) — they don't reimplement fetching.
-- **Component layering**:
-  - `components/primitives` — pure, prop-driven, no data fetching, no business logic. This is what the UI library route showcases.
-  - `components/composed` — primitives assembled into domain-shaped pieces (e.g. `OrderStatusBadge` maps a status enum from the generated types to color + label).
-  - `features/*` — pages and the hooks/logic that feed them. Pages stay thin: layout + composed components + a feature hook. If a page file is doing `fetch` or branching business logic, that's a smell.
-- **Design system / tokens**: one `theme/tokens.ts` exporting color, spacing (4/8pt scale), radius, shadow/elevation, and typography scales as plain objects; a `ThemeProvider` exposes them via context/hook so both web and native consume the same source. The UI library route imports directly from `theme/tokens.ts` — it's a live rendering of the tokens, not a hardcoded mockup.
-- **Status/enum sharing**: order status, availability flags, etc. are typed from the generated `packages/api-client` types — never redeclared as a frontend union.
+- **Data layer**: only Orval-generated hooks touch the network, wrapped by feature-level hooks (`useOrderActions`, `useMenuActions`) that add cache invalidation and toast feedback.
+- **Orval response shape gotcha**: the generated fetch client wraps every response as `{ data, status, headers }` — the actual API body is one level deeper than it looks (`response.data`, not `response`). For endpoints with multiple possible response shapes (e.g. `GetApiOrdersId200 | GetApiOrdersId404`), narrow on `response.status === 200` before accessing fields — `tsc` will catch it if you don't, but only once you actually run `pnpm typecheck`.
+- **Component layering**: `components/primitives` (pure, no data/business logic) → `components/composed` (primitives assembled into domain-shaped pieces) → `features/*` (pages + their hooks). Pages stay thin.
+- **Custom primitives over native ones, deliberately, twice**:
+  - `Toggle` replaces React Native's `<Switch>` — on web, `<Switch>` renders as a browser-styled checkbox that can ignore the `trackColor` prop and fall back to the OS/browser's default accent color (often green), which is a real theming leak. A fully custom-styled toggle keeps every color under our own tokens.
+  - `Select`'s dropdown renders through a `Modal` portal rather than CSS `position: absolute` + `z-index`. The original CSS approach fought a losing battle against Card's `elevation` styling, which React Native Web silently translates into its own `z-index`, creating a competing stacking context. Portaling through `Modal` (the same mechanism the Drawer/Modal primitive already uses) sidesteps the whole class of stacking-context bugs rather than trying to out-rank them.
+- **Design tokens**: adapted from Odyssey's own product (`pro.ody.app`) — violet primary accent, pill-shaped interactive elements, bold headline type, light-lavender surfaces — rather than generic defaults, live-rendered at `/ui-library`.
 
-## 6. Suggested page → data mapping
+## 6. Build tooling notes
 
-| Page | Primary generated hooks | Notes |
-|---|---|---|
-| Home | `useGetOrdersSummary` (or computed from `useGetOrders` + query params) | KPI cards use `composed/KpiCard`, skeleton state while loading |
-| Orders | `useGetOrders` (filters as query params), `useGetOrderById`, `usePatchOrderStatus` | list + drawer/detail, status actions call the mutation hook, not a raw field edit |
-| CRM | `useGetCustomers`, `useGetCustomerById` (order history + spend) | spend/order-count likely a backend-computed aggregate, not client-side reduction over all orders |
-| Menu | `useGetMenuItems`, `usePostMenuItem`, `usePatchMenuItem` | availability toggle is its own mutation, not bundled into a generic "edit" |
-| Settings | `useGetSettings`, `usePatchSettings` | single form, optimistic update + toast |
+- **pnpm linking mode**: the repo uses `node-linker=hoisted` in `.npmrc`, not pnpm's default symlinked `.pnpm` store. Expo Router's `"main": "expo-router/entry"` package.json convention computes an incorrect relative path in a symlinked pnpm monorepo (it assumes `expo-router` sits directly under the app's own `node_modules`). Hoisted linking avoids that entirely. The app also uses an explicit `index.js` (`import "expo-router/entry"`) instead of relying on the magic `"main"` string directly, for the same reason.
+- **Metro config** (`apps/dashboard/metro.config.js`) explicitly adds the workspace root's `node_modules` to `nodeModulesPaths` so Metro can resolve workspace packages (`shared`, `api-client`) alongside the app's own dependencies.
 
-## 7. Should generated code be committed?
+## 7. Testing
 
-Worth deciding explicitly and stating in your README's tradeoffs section: committing `packages/api-client` makes the repo runnable without running the backend first (good for review speed, which the assignment scores you on) but risks drift if someone forgets to regen after a schema change. A pragmatic middle ground: commit it, but add a CI/`pnpm lint` step (or just a documented habit) that regenerates and diffs before merge.
+Landed as **real integration tests against a live Postgres test database**, not mocked unit tests — this ended up being more valuable than originally scoped, since it exercises actual Drizzle queries, foreign keys, and relations rather than assumptions about them.
 
-## 8. Testing
+- **Backend** (`services/backend/tests/`): 19 tests across orders (state machine transitions, availability enforcement, server-side total calculation), menu (category/item creation, availability toggling), customers (aggregate stats, zero-order edge case), and settings (singleton-row behavior).
+- **Test isolation gotcha**: all backend test files share one physical test database, and each file's `beforeEach` does a `TRUNCATE ... CASCADE`. Vitest's default file-level parallelism caused cross-file race conditions (one file's reset wiping rows another file was mid-assertion on) — fixed via `fileParallelism: false` in `services/backend/vitest.config.ts`. A per-test-transaction-with-rollback strategy would allow safe parallelism if suite runtime becomes a bottleneck.
+- **Frontend** (`apps/dashboard/tests/`): unit tests on extracted pure logic — the price-input sanitizer (handles partial decimal input like `"6."` without the field fighting the user mid-keystroke) and the shared order-status transition map.
+- **Typecheck/lint**: `services/backend`, `packages/shared`, `packages/types`, and `packages/api-client` each needed their own `tsconfig.json` (only `apps/dashboard` had one initially) — without it, `tsc --noEmit` silently found nothing to check rather than erroring. ESLint needed an actual install + root flat config (`eslint.config.mjs`); neither existed until added.
 
-- **Backend**: unit tests on `orders/service.ts` — valid/invalid state transitions, total calculation, unavailable-item rejection. These are cheap, high-signal, and directly demonstrate the "deliberate backend behavior" requirement.
-- **Frontend**: a handful of tests on real logic — the status transition UI only shows valid next actions; a form control's validation states; one primitive's states (e.g. Button disabled/loading). Skip exhaustive snapshot coverage — the assignment explicitly says it's evaluating judgment, not volume.
-
-## 9. Scripts (turbo pipeline)
+## 8. Scripts
 
 ```jsonc
-// package.json (root)
 "scripts": {
   "dev:dashboard": "turbo run dev --filter=dashboard",
   "dev:backend": "turbo run dev --filter=backend",
@@ -158,18 +128,10 @@ Worth deciding explicitly and stating in your README's tradeoffs section: commit
 }
 ```
 
-## 10. Scope-cutting guidance for the 1–2 day timebox
+## 9. Known tradeoffs / incomplete areas
 
-Given the grading rubric, priority order if time runs short:
-
-1. Get the full pipeline (schema → zod → OpenAPI → Orval → hooks) working end-to-end for **one** resource (orders) before building breadth. A working pipeline on one resource proves the architecture; a wide app with hand-typed DTOs disproves it.
-2. Order state machine + server-side total calculation — this is the most-referenced backend requirement in the rubric.
-3. UI library route + primitives — cheap to build, and it's the single artifact that most directly demonstrates "design system," which is graded separately from "visual polish."
-4. Home KPIs can be the simplest page — a couple of aggregate queries, not a dashboard-of-dashboards.
-5. Native readiness is explicitly a bonus — don't spend timebox hours on it if web isn't solid yet.
-
-## Open decisions to make before writing code
-
-- Auth: the assignment doesn't mention it — probably fine to skip entirely and note it as an explicit tradeoff, rather than half-building it.
-- Singleton settings row vs. key-value settings table — singleton row is simpler and matches "ordering-related business settings" being a small, fixed set of fields.
-- Whether "reject unavailable items" happens at cart-build time (frontend UX) in addition to order-creation time (backend enforcement) — do both, but only the backend check is load-bearing.
+- **Auth**: not in scope — skipped as an explicit tradeoff rather than an oversight.
+- **Tax rate**: hardcoded in `orders/service.ts` rather than pulled from `settings` — fine for a demo, would move to the settings table for anything real.
+- **Order pagination**: the backend supports `page`/`pageSize` query params; the Orders page doesn't yet expose pagination controls in the UI.
+- **Generated client**: `packages/api-client/src/generated` is gitignored rather than committed — a fresh clone needs the full local Postgres + backend + `gen:contract` flow before the real hooks exist. Committing it would speed up first-run review at the cost of drift risk if someone forgets to regenerate after a schema change.
+- **Native readiness**: primitives are plain React Native components so native rendering is plausible, but only web has actually been exercised end to end.
