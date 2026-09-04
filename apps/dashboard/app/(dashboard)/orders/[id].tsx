@@ -15,8 +15,12 @@ import { color, spacing, typography } from "@/theme/tokens";
 export default function OrderDetailPage() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { data: response, isLoading, isError, refetch } = useGetApiOrdersId(id);
-  const order = response?.data;
+    const { data: response, isLoading, isError, refetch } = useGetApiOrdersId(id);
+  // The generated response type is a union of the 200 and 404 shapes (Orval
+  // doesn't throw on non-2xx by default). Narrowing on response.status is
+  // what tells TypeScript — and us — which variant we actually got, rather
+  // than assuming success and accessing fields that might not exist.
+  const order = response?.status === 200 ? response.data : undefined;
   const { updateStatus, getValidNextStatuses, isPending } = useOrderActions(id);
 
   if (isLoading) {

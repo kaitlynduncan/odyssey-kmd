@@ -108,13 +108,17 @@ export const orderStatusEvents = pgTable("order_status_events", {
 // Settings (singleton row)
 // ---------------------------------------------------------------------------
 
+export type OpeningHours = Partial<Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", { open: string; close: string }>>;
+
 export const settings = pgTable("settings", {
   id: uuid("id").primaryKey().defaultRandom(),
   prepTimeMinutes: integer("prep_time_minutes").notNull().default(20),
   autoAccept: boolean("auto_accept").notNull().default(false),
   isAcceptingOrders: boolean("is_accepting_orders").notNull().default(true),
-  // { mon: {open: "09:00", close: "21:00"}, ... }
-  openingHours: jsonb("opening_hours").notNull().default({}),
+  // Drizzle types jsonb as `unknown` by default — .$type<>() tells it (and
+  // every downstream consumer, including the OpenAPI response schema) the
+  // actual shape, rather than everyone re-guessing it independently.
+  openingHours: jsonb("opening_hours").$type<OpeningHours>().notNull().default({}),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -54,6 +54,7 @@ function stripCfConnectingIPHeader(input, init) {
 }
 var init_strip_cf_connecting_ip_header = __esm({
   ".wrangler/tmp/bundle-kox48W/strip-cf-connecting-ip-header.js"() {
+    "use strict";
     __name(stripCfConnectingIPHeader, "stripCfConnectingIPHeader");
     globalThis.fetch = new Proxy(globalThis.fetch, {
       apply(target, thisArg, argArray) {
@@ -22701,8 +22702,10 @@ var settings = pgTable("settings", {
   prepTimeMinutes: integer("prep_time_minutes").notNull().default(20),
   autoAccept: boolean("auto_accept").notNull().default(false),
   isAcceptingOrders: boolean("is_accepting_orders").notNull().default(true),
-  // { mon: {open: "09:00", close: "21:00"}, ... }
-  openingHours: jsonb("opening_hours").notNull().default({}),
+  // Drizzle types jsonb as `unknown` by default — .$type<>() tells it (and
+  // every downstream consumer, including the OpenAPI response schema) the
+  // actual shape, rather than everyone re-guessing it independently.
+  openingHours: jsonb("opening_hours").$type().notNull().default({}),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
 var menuCategoriesRelations = relations(menuCategories, ({ many }) => ({
