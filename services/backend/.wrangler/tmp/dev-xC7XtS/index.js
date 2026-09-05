@@ -46,14 +46,14 @@ var __publicField = (obj, key, value) => {
 };
 var __template = (cooked, raw2) => __freeze(__defProp(cooked, "raw", { value: __freeze(raw2 || cooked.slice()) }));
 
-// .wrangler/tmp/bundle-kox48W/strip-cf-connecting-ip-header.js
+// .wrangler/tmp/bundle-McMqvG/strip-cf-connecting-ip-header.js
 function stripCfConnectingIPHeader(input, init) {
   const request = new Request(input, init);
   request.headers.delete("CF-Connecting-IP");
   return request;
 }
 var init_strip_cf_connecting_ip_header = __esm({
-  ".wrangler/tmp/bundle-kox48W/strip-cf-connecting-ip-header.js"() {
+  ".wrangler/tmp/bundle-McMqvG/strip-cf-connecting-ip-header.js"() {
     "use strict";
     __name(stripCfConnectingIPHeader, "stripCfConnectingIPHeader");
     globalThis.fetch = new Proxy(globalThis.fetch, {
@@ -8221,14 +8221,14 @@ var require_lib2 = __commonJS({
   }
 });
 
-// .wrangler/tmp/bundle-kox48W/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-McMqvG/middleware-loader.entry.ts
 init_strip_cf_connecting_ip_header();
 init_modules_watch_stub();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
 
-// .wrangler/tmp/bundle-kox48W/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-McMqvG/middleware-insertion-facade.js
 init_strip_cf_connecting_ip_header();
 init_modules_watch_stub();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
@@ -23737,11 +23737,12 @@ var menuItemSelectSchema = b(menuItems);
 var createMenuItemInputSchema = c(menuItems, {
   priceCents: external_exports.number().int().positive()
 }).omit({ id: true, createdAt: true, updatedAt: true });
+var updateMenuItemInputSchema = createMenuItemInputSchema.partial();
 var createMenuCategoryInputSchema = c(menuCategories).omit({
   id: true,
   createdAt: true
 });
-var updateMenuItemInputSchema = createMenuItemInputSchema.partial();
+var updateMenuCategoryInputSchema = createMenuCategoryInputSchema.partial();
 var menuItemWithCategorySchema = menuItemSelectSchema.extend({
   category: menuCategorySelectSchema
 });
@@ -23769,11 +23770,6 @@ async function createMenuItem(db, input) {
   return item;
 }
 __name(createMenuItem, "createMenuItem");
-async function createMenuCategory(db, input) {
-  const [category] = await db.insert(menuCategories).values(input).returning();
-  return category;
-}
-__name(createMenuCategory, "createMenuCategory");
 async function updateMenuItem(db, id, input) {
   const [item] = await db.update(menuItems).set({ ...input, updatedAt: /* @__PURE__ */ new Date() }).where(eq(menuItems.id, id)).returning();
   return item;
@@ -23784,9 +23780,42 @@ async function setMenuItemAvailability(db, id, isAvailable) {
   return item;
 }
 __name(setMenuItemAvailability, "setMenuItemAvailability");
+var MenuError = class extends Error {
+  constructor(message, code, status) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+};
+__name(MenuError, "MenuError");
+async function createMenuCategory(db, input) {
+  const existing = await db.query.menuCategories.findMany();
+  const normalized = input.name.trim().toLowerCase();
+  if (existing.some((c2) => c2.name.trim().toLowerCase() === normalized)) {
+    throw new MenuError(`A category named "${input.name.trim()}" already exists`, "CATEGORY_NAME_TAKEN", 409);
+  }
+  const [category] = await db.insert(menuCategories).values({ ...input, name: input.name.trim() }).returning();
+  return category;
+}
+__name(createMenuCategory, "createMenuCategory");
+async function updateMenuCategory(db, id, input) {
+  if (input.name) {
+    const existing = await db.query.menuCategories.findMany();
+    const normalized = input.name.trim().toLowerCase();
+    if (existing.some((c2) => c2.id !== id && c2.name.trim().toLowerCase() === normalized)) {
+      throw new MenuError(`A category named "${input.name.trim()}" already exists`, "CATEGORY_NAME_TAKEN", 409);
+    }
+  }
+  const [category] = await db.update(menuCategories).set(input).where(eq(menuCategories.id, id)).returning();
+  return category;
+}
+__name(updateMenuCategory, "updateMenuCategory");
 
 // src/modules/menu/routes.ts
 var menuRoutes = new OpenAPIHono();
+var errorResponseSchema2 = external_exports.object({
+  error: external_exports.object({ code: external_exports.string(), message: external_exports.string() })
+});
 menuRoutes.openapi(
   createRoute({
     method: "get",
@@ -23845,9 +23874,49 @@ menuRoutes.openapi(
     path: "/menu/categories",
     tags: ["menu"],
     request: { body: { content: { "application/json": { schema: createMenuCategoryInputSchema } } } },
-    responses: { 201: { description: "Created", content: { "application/json": { schema: menuCategorySelectSchema } } } }
+    responses: {
+      201: { description: "Created", content: { "application/json": { schema: menuCategorySelectSchema } } },
+      409: { description: "Duplicate category name", content: { "application/json": { schema: errorResponseSchema2 } } }
+    }
   }),
-  async (c2) => c2.json(await createMenuCategory(c2.get("db"), c2.req.valid("json")), 201)
+  async (c2) => {
+    try {
+      const category = await createMenuCategory(c2.get("db"), c2.req.valid("json"));
+      return c2.json(category, 201);
+    } catch (err) {
+      if (err instanceof MenuError) {
+        return c2.json({ error: { code: err.code, message: err.message } }, err.status);
+      }
+      throw err;
+    }
+  }
+);
+menuRoutes.openapi(
+  createRoute({
+    method: "patch",
+    path: "/menu/categories/{id}",
+    tags: ["menu"],
+    request: {
+      params: external_exports.object({ id: external_exports.string().uuid() }),
+      body: { content: { "application/json": { schema: updateMenuCategoryInputSchema } } }
+    },
+    responses: {
+      200: { description: "Updated", content: { "application/json": { schema: menuCategorySelectSchema } } },
+      409: { description: "Duplicate category name", content: { "application/json": { schema: errorResponseSchema2 } } }
+    }
+  }),
+  async (c2) => {
+    const { id } = c2.req.valid("param");
+    try {
+      const category = await updateMenuCategory(c2.get("db"), id, c2.req.valid("json"));
+      return c2.json(category, 200);
+    } catch (err) {
+      if (err instanceof MenuError) {
+        return c2.json({ error: { code: err.code, message: err.message } }, err.status);
+      }
+      throw err;
+    }
+  }
 );
 
 // src/modules/customers/routes.ts
@@ -24119,7 +24188,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env2, _ctx, middlewareCtx
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-kox48W/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-McMqvG/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -24156,7 +24225,7 @@ function __facade_invoke__(request, env2, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-kox48W/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-McMqvG/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

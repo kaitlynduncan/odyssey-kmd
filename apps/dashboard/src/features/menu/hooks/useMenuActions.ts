@@ -3,6 +3,7 @@ import {
   usePostApiMenuItems,
   usePatchApiMenuItemsId,
   usePostApiMenuCategories,
+  usePatchApiMenuCategoriesId,
   getGetApiMenuQueryKey,
 } from "api-client";
 import { useToast } from "../../../components/primitives/Toast";
@@ -33,12 +34,15 @@ export function useMenuActions() {
     },
   });
 
-  // No onSuccess toast here — creating a category is an implicit step inside
-  // saving an item, not its own user-facing action. The item-save toast
-  // covers the whole flow.
   const createCategoryMutation = usePostApiMenuCategories({
     mutation: {
       onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not create category", "danger"),
+    },
+  });
+
+  const updateCategoryMutation = usePatchApiMenuCategoriesId({
+    mutation: {
+      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not reorder categories", "danger"),
     },
   });
 
@@ -59,18 +63,41 @@ export function useMenuActions() {
     }
   }
 
-  // Returns the new category's id so the caller can immediately use it as
-  // the item's categoryId.
   async function createCategory(name: string): Promise<string> {
     const result = await createCategoryMutation.mutateAsync({ data: { name, sortOrder: 0 } });
     invalidate();
     return (result as any).data.id;
   }
 
+  // Swaps sortOrder between a category and its immediate neighbor in the
+  // given (already sorted) list, then invalidates so the new order reflects
+  // everywhere. Two sequential PATCH calls rather than a single bulk
+  // endpoint — simple and sufficient for a handful of categories.
+  async function moveCategory(
+    sortedCategories: { id: string; sortOrder: number }[],
+    categoryId: string,
+    direction: "up" | "down"
+  ) {
+    const idx = sortedCategories.findIndex((c) => c.id === categoryId);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= sortedCategories.length) return;
+
+    const current = sortedCategories[idx];
+    const neighbor = sortedCategories[swapIdx];
+
+    await Promise.all([
+      updateCategoryMutation.mutateAsync({ id: current.id, data: { sortOrder: neighbor.sortOrder } }),
+      updateCategoryMutation.mutateAsync({ id: neighbor.id, data: { sortOrder: current.sortOrder } }),
+    ]);
+    invalidate();
+  }
+
   return {
     saveItem,
     createCategory,
+    moveCategory,
     isSaving: createMutation.isPending || updateMutation.isPending,
     isCreatingCategory: createCategoryMutation.isPending,
+    isReordering: updateCategoryMutation.isPending,
   };
 }

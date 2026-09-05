@@ -3,9 +3,17 @@ import { createDb } from "./client";
 import { menuCategories, menuItems, customers, settings } from "./schema";
 import { createOrder } from "../modules/orders/service";
 import { transitionStatus } from "../modules/orders/service";
+import { sql } from "drizzle-orm";
 
 async function main() {
   const db = createDb(process.env.DATABASE_URL!);
+
+  // Idempotent: wipe everything first, so re-running the seed always
+  // produces the same clean dataset instead of stacking duplicates.
+  console.log("Clearing existing data...");
+  await db.execute(
+    sql`truncate table order_status_events, order_items, orders, customers, menu_items, menu_categories, settings restart identity cascade`
+  );
 
   console.log("Seeding menu...");
   const [mains, drinks, desserts] = await db

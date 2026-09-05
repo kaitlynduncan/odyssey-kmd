@@ -11,9 +11,9 @@ import { SkeletonRows } from "@/components/primitives/Skeleton";
 import { StatePanel } from "@/components/primitives/StatePanel";
 import { useGetApiMenu } from "api-client";
 import { useMenuActions } from "@/features/menu/hooks/useMenuActions";
+import { sanitizePriceInput } from "@/lib/priceInput";
 import { formatCents } from "shared/src/money";
 import { color, spacing, typography } from "@/theme/tokens";
-import { sanitizePriceInput } from "@/lib/priceInput";
 
 const NEW_CATEGORY_VALUE = "__new__";
 
@@ -29,16 +29,17 @@ type EditingItem = {
 
 export default function MenuPage() {
   const { data: response, isLoading, isError, refetch } = useGetApiMenu();
-  const { saveItem, createCategory, isSaving, isCreatingCategory } = useMenuActions();
+  const { saveItem, createCategory, moveCategory, isSaving, isCreatingCategory, isReordering } = useMenuActions();
   const [editing, setEditing] = useState<EditingItem | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
 
+  // Categories come back from the backend already ordered by sortOrder —
+  // iterate them directly rather than deriving order from item order.
   const categories = response?.data?.categories ?? [];
   const items = response?.data?.items ?? [];
-  const categoryName = (id: string) => categories.find((c: any) => c.id === id)?.name ?? "Uncategorized";
 
-  const byCategory = new Map<string, any[]>();
-  items.forEach((i: any) => byCategory.set(i.categoryId, [...(byCategory.get(i.categoryId) ?? []), i]));
+  const itemsByCategory = new Map<string, any[]>();
+  items.forEach((i: any) => itemsByCategory.set(i.categoryId, [...(itemsByCategory.get(i.categoryId) ?? []), i]));
 
   const categoryOptions = [
     ...categories.map((c: any) => ({ label: c.name, value: c.id })),
@@ -84,6 +85,10 @@ export default function MenuPage() {
     setEditing(null);
   }
 
+  function handleMove(categoryId: string, direction: "up" | "down") {
+    moveCategory(categories, categoryId, direction);
+  }
+
   return (
     <ScrollView>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.xl }}>
@@ -99,42 +104,69 @@ export default function MenuPage() {
         <Card>
           <StatePanel tone="error" title="Could not load menu" description="Check that the backend is running." actionLabel="Retry" onAction={() => refetch()} />
         </Card>
-      ) : items.length === 0 ? (
+      ) : categories.length === 0 ? (
         <Card>
-          <StatePanel title="No menu items yet" description="Add your first item to get started." actionLabel="Add item" onAction={openCreate} />
+          <StatePanel title="No menu categories yet" description="Add your first item to get started." actionLabel="Add item" onAction={openCreate} />
         </Card>
       ) : (
-        [...byCategory.entries()].map(([categoryId, categoryItems]) => (
-          <View key={categoryId} style={{ marginBottom: spacing.xl }}>
-            <Text style={[typography.h2, { marginBottom: spacing.md }]}>{categoryName(categoryId)}</Text>
-            <Card padded={false}>
-              {categoryItems.map((item, idx) => (
-                <Pressable
-                  key={item.id}
-                  onPress={() => openEdit(item)}
-                  style={({ hovered }: any) => [
-                    {
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: spacing.lg,
-                      backgroundColor: hovered ? color.surfaceSunken : "transparent",
-                      borderBottomWidth: idx < categoryItems.length - 1 ? 1 : 0,
-                      borderBottomColor: color.border,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={typography.bodyStrong}>{item.name}</Text>
-                    <Text style={[typography.caption, { color: color.textMuted }]}>{item.description}</Text>
-                  </View>
-                  <Text style={[typography.body, { marginRight: spacing.xl }]}>{formatCents(item.priceCents)}</Text>
-                  <Badge label={item.isAvailable ? "Available" : "Unavailable"} state={item.isAvailable ? "success" : "neutral"} />
-                </Pressable>
-              ))}
-            </Card>
-          </View>
-        ))
+        categories.map((category: any, idx: number) => {
+          const categoryItems = itemsByCategory.get(category.id) ?? [];
+          return (
+            <View key={category.id} style={{ marginBottom: spacing.xl }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.md }}>
+                <Text style={typography.h2}>{category.name}</Text>
+                <View style={{ flexDirection: "row", gap: spacing.xs, marginLeft: spacing.sm }}>
+                  <Pressable
+                    onPress={() => handleMove(category.id, "up")}
+                    disabled={idx === 0 || isReordering}
+                    style={{ opacity: idx === 0 ? 0.3 : 1, padding: spacing.xs }}
+                    accessibilityLabel={`Move ${category.name} up`}
+                  >
+                    <Text style={typography.bodyStrong}>↑</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleMove(category.id, "down")}
+                    disabled={idx === categories.length - 1 || isReordering}
+                    style={{ opacity: idx === categories.length - 1 ? 0.3 : 1, padding: spacing.xs }}
+                    accessibilityLabel={`Move ${category.name} down`}
+                  >
+                    <Text style={typography.bodyStrong}>↓</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <Card padded={categoryItems.length === 0}>
+                {categoryItems.length === 0 ? (
+                  <Text style={[typography.body, { color: color.textMuted }]}>No items in this category yet.</Text>
+                ) : (
+                  categoryItems.map((item: any, itemIdx: number) => (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => openEdit(item)}
+                      style={({ hovered }: any) => [
+                        {
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: spacing.lg,
+                          backgroundColor: hovered ? color.surfaceSunken : "transparent",
+                          borderBottomWidth: itemIdx < categoryItems.length - 1 ? 1 : 0,
+                          borderBottomColor: color.border,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={typography.bodyStrong}>{item.name}</Text>
+                        <Text style={[typography.caption, { color: color.textMuted }]}>{item.description}</Text>
+                      </View>
+                      <Text style={[typography.body, { marginRight: spacing.xl }]}>{formatCents(item.priceCents)}</Text>
+                      <Badge label={item.isAvailable ? "Available" : "Unavailable"} state={item.isAvailable ? "success" : "neutral"} />
+                    </Pressable>
+                  ))
+                )}
+              </Card>
+            </View>
+          );
+        })
       )}
 
       <Drawer
@@ -170,7 +202,7 @@ export default function MenuPage() {
             <Input
               label="Price (USD)"
               value={editing.priceInput}
-                            onChangeText={(v) => setEditing({ ...editing, priceInput: sanitizePriceInput(v) })}
+              onChangeText={(v) => setEditing({ ...editing, priceInput: sanitizePriceInput(v) })}
               placeholder="0.00"
             />
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
