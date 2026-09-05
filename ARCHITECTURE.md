@@ -18,7 +18,7 @@ apps/dashboard/                 Expo + React Native + Web
     (dashboard)/
       home.tsx
       orders/
-        index.tsx               list + filters
+        index.tsx               list + filters + "New order" drawer
         [id].tsx                detail
       menu.tsx
       crm/
@@ -31,8 +31,10 @@ apps/dashboard/                 Expo + React Native + Web
       primitives/                Button, Input, Select, Toggle, Modal, Card, Badge, Toast, Skeleton, Table, Sidebar, StatePanel
       composed/                  OrderStatusBadge, KpiCard
     features/
-      orders/hooks/              useOrderActions — wraps generated status-update mutation
-      menu/hooks/                useMenuActions — wraps generated item/category mutations
+      orders/
+        cart.ts                  pure cart logic (add/remove/quantity/total) — no React, no network
+        hooks/useOrderActions.ts wraps generated status-update + create-order mutations
+      menu/hooks/useMenuActions.ts  wraps generated item/category mutations
     theme/                       token definitions
     lib/                         query client, price-input sanitizer
   tests/
@@ -48,7 +50,7 @@ services/backend/                Hono on Cloudflare Workers
     app.ts                        composes modules into the Hono app
     index.ts                      Worker entry
   drizzle/                        migrations
-  tests/                          integration tests against a real Postgres test DB
+  tests/                          schema validation tests + integration tests against a real Postgres test DB
 
 packages/
   shared/                         cross-cutting UI-agnostic utilities (money formatting, order-status transition map)
@@ -66,7 +68,7 @@ packages/
 | `orders` | id, customer_id (nullable — walk-in), status, subtotal_cents, tax_cents, total_cents, created_at, updated_at | totals are **computed server-side on creation**, never trusted from client |
 | `order_items` | id, order_id, menu_item_id, name_snapshot, unit_price_cents_snapshot, quantity | snapshot fields so historical orders don't change if a menu item's price changes later |
 | `order_status_events` | id, order_id, from_status, to_status, created_at | audit trail for every status change |
-| `settings` | id (singleton row), prep_time_minutes, auto_accept, is_accepting_orders, opening_hours (jsonb, typed via `.$type<OpeningHours>()`) | |
+| `settings` | id (singleton row), prep_time_minutes, auto_accept, is_accepting_orders, opening_hours (jsonb, typed via `.$type<OpeningHours>()`) | schema and backend support opening hours; **no frontend UI for it yet** — see §9 |
 
 **Gotcha worth knowing**: Drizzle's relational query API (`db.query.orders.findMany({ with: {...} })`) requires the relation to be declared on *both* sides via `relations()` — declaring `orders.statusEvents` without also declaring `orderStatusEvents.order` (the back-reference) produces a runtime "not enough information to infer relation" error, not a compile-time one. Every table with a foreign key needs its own `relations()` export.
 
@@ -87,31 +89,35 @@ Enforced in `orders/service.ts` via a transition map (`Record<Status, Status[]>`
 - **Module-per-resource** structure (menu / orders / customers / settings).
 - **Postgres driver**: `node-postgres` (`pg`), not a Workers-native HTTP driver. This needs `compatibility_flags = ["nodejs_compat"]` in `wrangler.toml` (and a recent `compatibility_date`) to resolve Node built-ins (`net`, `tls`, `dns`, `crypto`, etc.) inside the Workers runtime. A from-scratch Cloudflare deploy would need a [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) binding in front of Postgres (works with `pg` unchanged), or swapping to a Workers-native HTTP driver against a hosted Postgres.
 - **Validation**: every route uses the drizzle-zod-derived schema as its `zValidator` input.
-- **Business rules enforced server-side, always**: unavailable menu items rejected at order-creation time; totals computed server-side from current menu prices; status transitions go through the state machine.
+- **Business rules enforced server-side, always**: unavailable menu items reject the *whole* order (not just that line) at creation time; totals computed server-side from current menu prices; status transitions go through the state machine; order line items snapshot name/price at creation so later menu edits don't retroactively change historical orders.
 - **OpenAPI generation**: `@hono/zod-openapi` produces the spec directly from the same Zod schemas used for validation.
 
 ## 5. Frontend (Expo + React Native + Web)
 
 - **Data layer**: only Orval-generated hooks touch the network, wrapped by feature-level hooks (`useOrderActions`, `useMenuActions`) that add cache invalidation and toast feedback.
+- **Business logic extracted from page components**: the "New order" drawer's cart (add item / change quantity / running total) lives in `features/orders/cart.ts` as pure, framework-free functions — not inline `useState` reducers in the page. The Orders page calls these functions; it doesn't contain the logic itself. This is what makes the cart's edge cases (merging duplicate items, removing a line at zero quantity) unit-testable without rendering anything.
 - **Orval response shape gotcha**: the generated fetch client wraps every response as `{ data, status, headers }` — the actual API body is one level deeper than it looks (`response.data`, not `response`). For endpoints with multiple possible response shapes (e.g. `GetApiOrdersId200 | GetApiOrdersId404`), narrow on `response.status === 200` before accessing fields — `tsc` will catch it if you don't, but only once you actually run `pnpm typecheck`.
-- **Component layering**: `components/primitives` (pure, no data/business logic) → `components/composed` (primitives assembled into domain-shaped pieces) → `features/*` (pages + their hooks). Pages stay thin.
+- **Component layering**: `components/primitives` (pure, no data/business logic) → `components/composed` (primitives assembled into domain-shaped pieces) → `features/*` (pages + their hooks/logic). Pages stay thin.
 - **Custom primitives over native ones, deliberately, twice**:
   - `Toggle` replaces React Native's `<Switch>` — on web, `<Switch>` renders as a browser-styled checkbox that can ignore the `trackColor` prop and fall back to the OS/browser's default accent color (often green), which is a real theming leak. A fully custom-styled toggle keeps every color under our own tokens.
-  - `Select`'s dropdown renders through a `Modal` portal rather than CSS `position: absolute` + `z-index`. The original CSS approach fought a losing battle against Card's `elevation` styling, which React Native Web silently translates into its own `z-index`, creating a competing stacking context. Portaling through `Modal` (the same mechanism the Drawer/Modal primitive already uses) sidesteps the whole class of stacking-context bugs rather than trying to out-rank them.
+  - `Select`'s dropdown renders through a `Modal` portal rather than CSS `position: absolute` + `z-index`. The original CSS approach fought a losing battle against Card's `elevation` styling, which React Native Web silently translates into its own `z-index`, creating a competing stacking context. Portaling through `Modal` sidesteps the whole class of stacking-context bugs rather than trying to out-rank them.
+- **Modal/Drawer body is a flex-constrained `ScrollView`**, not a plain `View`. Without `flex: 1` on the scrollable body, long content (e.g. a new order with many line items) grows the whole panel past the screen and pushes the fixed footer (Save/Cancel buttons) out of reach instead of scrolling internally. The header and footer stay pinned; only the middle content area scrolls.
 - **Design tokens**: adapted from Odyssey's own product (`pro.ody.app`) — violet primary accent, pill-shaped interactive elements, bold headline type, light-lavender surfaces — rather than generic defaults, live-rendered at `/ui-library`.
 
 ## 6. Build tooling notes
 
 - **pnpm linking mode**: the repo uses `node-linker=hoisted` in `.npmrc`, not pnpm's default symlinked `.pnpm` store. Expo Router's `"main": "expo-router/entry"` package.json convention computes an incorrect relative path in a symlinked pnpm monorepo (it assumes `expo-router` sits directly under the app's own `node_modules`). Hoisted linking avoids that entirely. The app also uses an explicit `index.js` (`import "expo-router/entry"`) instead of relying on the magic `"main"` string directly, for the same reason.
 - **Metro config** (`apps/dashboard/metro.config.js`) explicitly adds the workspace root's `node_modules` to `nodeModulesPaths` so Metro can resolve workspace packages (`shared`, `api-client`) alongside the app's own dependencies.
+- **Vitest ≠ Metro for path aliases**: the `@/...` import alias is configured for Metro via `tsconfig.json`'s `paths`, but Vitest runs on Vite, which knows nothing about that config. `apps/dashboard/vitest.config.ts` re-declares the same alias for Vite's resolver — any test importing via `@/...` fails with a cryptic "does the file exist?" error without it, even though the same import works fine in the actual app.
 
 ## 7. Testing
 
-Landed as **real integration tests against a live Postgres test database**, not mocked unit tests — this ended up being more valuable than originally scoped, since it exercises actual Drizzle queries, foreign keys, and relations rather than assumptions about them.
+Two layers of backend coverage, plus frontend logic tests — 40+ tests total across both packages.
 
-- **Backend** (`services/backend/tests/`): 19 tests across orders (state machine transitions, availability enforcement, server-side total calculation), menu (category/item creation, availability toggling), customers (aggregate stats, zero-order edge case), and settings (singleton-row behavior).
-- **Test isolation gotcha**: all backend test files share one physical test database, and each file's `beforeEach` does a `TRUNCATE ... CASCADE`. Vitest's default file-level parallelism caused cross-file race conditions (one file's reset wiping rows another file was mid-assertion on) — fixed via `fileParallelism: false` in `services/backend/vitest.config.ts`. A per-test-transaction-with-rollback strategy would allow safe parallelism if suite runtime becomes a bottleneck.
-- **Frontend** (`apps/dashboard/tests/`): unit tests on extracted pure logic — the price-input sanitizer (handles partial decimal input like `"6."` without the field fighting the user mid-keystroke) and the shared order-status transition map.
+- **Backend schema validation** (`tests/orders.schemas.test.ts`): fast, no database — exercises the Zod schemas directly (`safeParse`) for required-field rejection, UUID format, positive/integer quantity constraints, notes length limits, status enum values, and query-param coercion/defaults.
+- **Backend integration tests** (`tests/*.service.test.ts`, `tests/*.service.edge.test.ts`): real Postgres test database. Covers the order state machine, availability enforcement (including the "one unavailable item rejects the whole order" rule), server-side total calculation across multiple line items, price/name snapshotting (menu price changes don't retroactively alter past orders), menu category/item CRUD including sort ordering, partial-update semantics (updating one field doesn't clobber others), and customer aggregate stats including the zero-orders edge case.
+- **Test isolation gotcha**: all backend test files share one physical test database, and each file's `beforeEach` does a `TRUNCATE ... CASCADE`. Vitest's default file-level parallelism caused cross-file race conditions — fixed via `fileParallelism: false` in `services/backend/vitest.config.ts`.
+- **Frontend** (`apps/dashboard/tests/`): unit tests on extracted pure logic — the price-input sanitizer, the shared order-status transition map, and the order cart (add/increment, decrement-to-removal, multi-item totals).
 - **Typecheck/lint**: `services/backend`, `packages/shared`, `packages/types`, and `packages/api-client` each needed their own `tsconfig.json` (only `apps/dashboard` had one initially) — without it, `tsc --noEmit` silently found nothing to check rather than erroring. ESLint needed an actual install + root flat config (`eslint.config.mjs`); neither existed until added.
 
 ## 8. Scripts
@@ -130,8 +136,10 @@ Landed as **real integration tests against a live Postgres test database**, not 
 
 ## 9. Known tradeoffs / incomplete areas
 
+- **Opening hours has no frontend control.** The `settings.openingHours` field is fully modeled, validated, and persistable via `PATCH /settings` — the Settings page just doesn't expose a UI for it yet (only prep time, auto-accept, and accepting-orders are editable). The most concrete remaining gap against the spec.
+- **A few frontend types are loosened to `any`** (e.g. `Column<any>` in some tables) rather than the exact generated types, in a couple of places where backend response shapes were being iterated on quickly. Doesn't reintroduce hand-written DTOs, but is a minor discipline gap worth tightening.
 - **Auth**: not in scope — skipped as an explicit tradeoff rather than an oversight.
 - **Tax rate**: hardcoded in `orders/service.ts` rather than pulled from `settings` — fine for a demo, would move to the settings table for anything real.
 - **Order pagination**: the backend supports `page`/`pageSize` query params; the Orders page doesn't yet expose pagination controls in the UI.
-- **Generated client**: `packages/api-client/src/generated` is gitignored rather than committed — a fresh clone needs the full local Postgres + backend + `gen:contract` flow before the real hooks exist. Committing it would speed up first-run review at the cost of drift risk if someone forgets to regenerate after a schema change.
+- **Generated client**: `packages/api-client/src/generated` is gitignored rather than committed — a fresh clone needs the full local Postgres + backend + `gen:contract` flow before the real hooks exist.
 - **Native readiness**: primitives are plain React Native components so native rendering is plausible, but only web has actually been exercised end to end.

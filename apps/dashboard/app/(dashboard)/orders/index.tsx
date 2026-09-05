@@ -11,6 +11,7 @@ import { SkeletonRows } from "@/components/primitives/Skeleton";
 import { OrderStatusBadge } from "@/components/composed/OrderStatusBadge";
 import { useGetApiOrders, useGetApiCustomers, useGetApiMenu } from "api-client";
 import { useOrderActions } from "@/features/orders/hooks/useOrderActions";
+import { addItemToCart, changeCartQuantity, cartTotalCents, type CartLine } from "@/features/orders/cart";
 import { formatCents } from "shared/src/money";
 import { typography, spacing, color } from "@/theme/tokens";
 
@@ -25,13 +26,6 @@ const STATUS_FILTER_OPTIONS = [
 ] as const;
 
 const WALK_IN_VALUE = "__walk_in__";
-
-interface CartLine {
-  menuItemId: string;
-  name: string;
-  priceCents: number;
-  quantity: number;
-}
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -56,8 +50,6 @@ export default function OrdersPage() {
     ...customers.map((c: any) => ({ label: c.name, value: c.id })),
   ];
 
-  const cartTotalCents = cart.reduce((sum, line) => sum + line.priceCents * line.quantity, 0);
-
   function openNewOrder() {
     setCustomerId(WALK_IN_VALUE);
     setCart([]);
@@ -65,21 +57,11 @@ export default function OrdersPage() {
   }
 
   function addItem(item: any) {
-    setCart((prev) => {
-      const existing = prev.find((l) => l.menuItemId === item.id);
-      if (existing) {
-        return prev.map((l) => (l.menuItemId === item.id ? { ...l, quantity: l.quantity + 1 } : l));
-      }
-      return [...prev, { menuItemId: item.id, name: item.name, priceCents: item.priceCents, quantity: 1 }];
-    });
+    setCart((prev) => addItemToCart(prev, item));
   }
 
   function changeQuantity(menuItemId: string, delta: number) {
-    setCart((prev) =>
-      prev
-        .map((l) => (l.menuItemId === menuItemId ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0)
-    );
+    setCart((prev) => changeCartQuantity(prev, menuItemId, delta));
   }
 
   async function handleCreateOrder() {
@@ -148,7 +130,7 @@ export default function OrdersPage() {
         footer={
           <>
             <Button label="Cancel" variant="secondary" onPress={() => setDrawerOpen(false)} />
-            <Button label={`Create order · ${formatCents(cartTotalCents)}`} loading={isCreating} disabled={cart.length === 0} onPress={handleCreateOrder} />
+            <Button label={`Create order · ${formatCents(cartTotalCents(cart))}`} loading={isCreating} disabled={cart.length === 0} onPress={handleCreateOrder} />
           </>
         }
       >

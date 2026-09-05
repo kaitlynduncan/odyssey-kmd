@@ -15,15 +15,15 @@ Drizzle schema → drizzle-zod → Hono/OpenAPI → Orval → React Query hooks 
 ```
 
 Implemented flows:
-- **Orders**: list with server-side status filtering, detail view, status transitions enforced by a backend state machine (with a full audit trail via `order_status_events`), server-computed totals, availability enforcement at order-creation time.
+- **Orders**: list with server-side status filtering, detail view, status transitions enforced by a backend state machine (with a full audit trail via `order_status_events`), server-computed totals, availability enforcement at order-creation time, and a **"New order" drawer** — pick a customer (or leave as walk-in), add menu items with quantities, submit to the real backend.
 - **Menu**: categories and items, create/edit via a drawer, inline "create new category" flow, availability toggle.
 - **CRM**: customer list with server-computed order count/spend aggregates, customer detail with order history, clickable through to order detail.
-- **Settings**: prep time, auto-accept, and accepting-orders toggles, backed by a singleton settings row.
+- **Settings**: prep time, auto-accept, and accepting-orders toggles, backed by a singleton settings row. (Opening hours is modeled and persistable on the backend but has no UI control yet — see `ARCHITECTURE.md` §9.)
 - **Home**: live KPIs (total orders, revenue, pending orders, most popular item) computed from real order data, clickable recent-orders list.
 
 Design system: a full token set (color, spacing, radius, elevation, typography) plus 11 reusable primitives (Button, Input, Select, Toggle, Modal/Drawer, Card, Badge, Skeleton, Toast, Table, Sidebar, StatePanel), all showcased live at the `/ui-library` route. Visual identity is intentionally adapted from Odyssey's own product (violet primary accent, pill-shaped interactive elements, bold headline type) rather than generic defaults.
 
-Testing & DX: 19 backend integration tests (state machine transitions, availability enforcement, server-side total calculation, customer aggregates, settings singleton behavior) run against a real Postgres test database, plus frontend unit tests for shared logic. `pnpm test`, `pnpm lint`, and `pnpm typecheck` all pass clean across every workspace package.
+Testing & DX: 30+ backend tests (fast Zod schema-validation tests plus real integration tests against a live Postgres test database — state machine transitions, availability enforcement, server-side total calculation, price/name snapshotting, customer aggregates, settings singleton behavior) and frontend unit tests on extracted pure logic (price-input sanitizing, order-status transitions, order-cart operations). `pnpm test`, `pnpm lint`, and `pnpm typecheck` all pass clean across every workspace package.
 
 ## Local setup
 
@@ -95,7 +95,7 @@ pnpm typecheck
 
 ### Creating extra test data via the API
 
-Beyond the seed script, you can hit the running backend directly to build out scenarios (e.g. a customer with several orders, for testing CRM aggregates):
+Beyond the seed script and the dashboard's own "New order" flow, you can hit the running backend directly to build out scenarios (e.g. a customer with a long order history, for testing CRM aggregates):
 
 ```bash
 # List menu items to get real IDs
@@ -120,6 +120,7 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full design rationale — rep
 
 ## Known tradeoffs & things worth knowing
 
+- **Opening hours has no frontend control yet** — modeled and persistable on the backend, not yet editable from the Settings page. The most concrete remaining gap against the assignment spec.
 - **Postgres driver**: `services/backend/src/db/client.ts` uses `node-postgres` (`pg`), which needs a real TCP connection. That's fine for local dev via `wrangler dev`'s Node-compatibility mode (enabled via `compatibility_flags = ["nodejs_compat"]` in `wrangler.toml`), but a from-scratch Cloudflare Worker deploy would need either a [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) binding in front of Postgres (works with `pg` unchanged) or swapping to a Workers-native HTTP driver against a hosted Postgres like Neon.
 - **pnpm linking mode**: `node-linker=hoisted` is required because Expo Router's entry-point resolution doesn't correctly resolve through pnpm's default nested `.pnpm` symlink structure in this monorepo layout. See `ARCHITECTURE.md` §6 for the full detail.
 - **Integration test isolation**: backend tests share one physical Postgres test database with `TRUNCATE`-based resets between tests, so test files must run sequentially (`fileParallelism: false` in `vitest.config.ts`) rather than in parallel. See `ARCHITECTURE.md` §7.
