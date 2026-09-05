@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal as RNModal, View, Text, Pressable, StyleSheet } from "react-native";
+import { Modal as RNModal, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { color, radius, spacing, typography, elevation } from "../../theme/tokens";
 
 export interface ModalProps {
@@ -21,7 +21,9 @@ export function Modal({ visible, onClose, title, children, footer }: ModalProps)
               <Text style={{ color: color.textMuted, fontSize: 18 }}>✕</Text>
             </Pressable>
           </View>
-          <View style={styles.body}>{children}</View>
+          <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+            {children}
+          </ScrollView>
           {footer && <View style={styles.footer}>{footer}</View>}
         </Pressable>
       </Pressable>
@@ -43,7 +45,9 @@ export function Drawer({ visible, onClose, title, children, footer }: ModalProps
               <Text style={{ color: color.textMuted, fontSize: 18 }}>✕</Text>
             </Pressable>
           </View>
-          <View style={styles.body}>{children}</View>
+          <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+            {children}
+          </ScrollView>
           {footer && <View style={styles.footer}>{footer}</View>}
         </Pressable>
       </Pressable>
@@ -71,7 +75,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: color.border,
   },
-  body: { padding: spacing.xl, gap: spacing.lg },
+  body: { flex: 1 },
+  bodyContent: { padding: spacing.xl, gap: spacing.lg },
   footer: {
     flexDirection: "row",
     justifyContent: "flex-end",
