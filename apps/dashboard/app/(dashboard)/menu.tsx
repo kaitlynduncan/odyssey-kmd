@@ -32,9 +32,9 @@ export default function MenuPage() {
   const { saveItem, createCategory, moveCategory, isSaving, isCreatingCategory, isReordering } = useMenuActions();
   const [editing, setEditing] = useState<EditingItem | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryNameError, setCategoryNameError] = useState<string | undefined>();
+  const [itemNameError, setItemNameError] = useState<string | undefined>();
 
-  // Categories come back from the backend already ordered by sortOrder —
-  // iterate them directly rather than deriving order from item order.
   const categories = response?.data?.categories ?? [];
   const items = response?.data?.items ?? [];
 
@@ -46,20 +46,20 @@ export default function MenuPage() {
     { label: "+ New category…", value: NEW_CATEGORY_VALUE },
   ];
 
+  function resetErrors() {
+    setCategoryNameError(undefined);
+    setItemNameError(undefined);
+  }
+
   function openCreate() {
     setNewCategoryName("");
-    setEditing({
-      categoryId: categories[0]?.id ?? "",
-      name: "",
-      description: "",
-      priceCents: 0,
-      priceInput: "",
-      isAvailable: true,
-    });
+    resetErrors();
+    setEditing({ categoryId: categories[0]?.id ?? "", name: "", description: "", priceCents: 0, priceInput: "", isAvailable: true });
   }
 
   function openEdit(item: any) {
     setNewCategoryName("");
+    resetErrors();
     setEditing({
       id: item.id,
       categoryId: item.categoryId,
@@ -73,16 +73,28 @@ export default function MenuPage() {
 
   async function handleSave() {
     if (!editing) return;
+    resetErrors();
     const priceCents = Math.round(parseFloat(editing.priceInput || "0") * 100);
 
     let categoryId = editing.categoryId;
     if (categoryId === NEW_CATEGORY_VALUE) {
       if (!newCategoryName.trim()) return;
-      categoryId = await createCategory(newCategoryName.trim());
+      try {
+        categoryId = await createCategory(newCategoryName.trim());
+      } catch (err: any) {
+        // Stop here — do NOT proceed to create the item under a category
+        // that failed to be created.
+        setCategoryNameError(err?.message ?? "This category already exists");
+        return;
+      }
     }
 
-    saveItem({ ...editing, categoryId, priceCents });
-    setEditing(null);
+    try {
+      await saveItem({ ...editing, categoryId, priceCents });
+      setEditing(null);
+    } catch (err: any) {
+      setItemNameError(err?.message ?? "An item with this name already exists in this category");
+    }
   }
 
   function handleMove(categoryId: string, direction: "up" | "down") {
@@ -186,18 +198,34 @@ export default function MenuPage() {
               label="Category"
               value={editing.categoryId}
               options={categoryOptions}
-              onChange={(v) => setEditing({ ...editing, categoryId: v })}
+              onChange={(v) => {
+                setEditing({ ...editing, categoryId: v });
+                setCategoryNameError(undefined);
+              }}
             />
             {editing.categoryId === NEW_CATEGORY_VALUE && (
               <Input
                 label="New category name"
                 value={newCategoryName}
-                onChangeText={setNewCategoryName}
+                onChangeText={(v) => {
+                  setNewCategoryName(v);
+                  setCategoryNameError(undefined);
+                }}
                 placeholder="e.g. Desserts"
+                error={categoryNameError}
               />
             )}
 
-            <Input label="Name" value={editing.name} onChangeText={(v) => setEditing({ ...editing, name: v })} placeholder="e.g. Margherita Pizza" />
+            <Input
+              label="Name"
+              value={editing.name}
+              onChangeText={(v) => {
+                setEditing({ ...editing, name: v });
+                setItemNameError(undefined);
+              }}
+              placeholder="e.g. Margherita Pizza"
+              error={itemNameError}
+            />
             <Input label="Description" value={editing.description} onChangeText={(v) => setEditing({ ...editing, description: v })} placeholder="Short description shown on the menu" />
             <Input
               label="Price (USD)"

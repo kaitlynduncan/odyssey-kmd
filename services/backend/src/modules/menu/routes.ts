@@ -35,9 +35,22 @@ menuRoutes.openapi(
     path: "/menu/items",
     tags: ["menu"],
     request: { body: { content: { "application/json": { schema: createMenuItemInputSchema } } } },
-    responses: { 201: { description: "Created", content: { "application/json": { schema: menuItemSelectSchema } } } },
+    responses: {
+      201: { description: "Created", content: { "application/json": { schema: menuItemSelectSchema } } },
+      409: { description: "Duplicate item name", content: { "application/json": { schema: errorResponseSchema } } },
+    },
   }),
-  async (c) => c.json(await menuService.createMenuItem(c.get("db"), c.req.valid("json")), 201)
+  async (c) => {
+    try {
+      const item = await menuService.createMenuItem(c.get("db"), c.req.valid("json"));
+      return c.json(item, 201);
+    } catch (err) {
+      if (err instanceof MenuError) {
+        return c.json({ error: { code: err.code, message: err.message } }, err.status as 409);
+      }
+      throw err;
+    }
+  }
 );
 
 menuRoutes.openapi(
@@ -49,11 +62,22 @@ menuRoutes.openapi(
       params: z.object({ id: z.string().uuid() }),
       body: { content: { "application/json": { schema: updateMenuItemInputSchema } } },
     },
-    responses: { 200: { description: "Updated", content: { "application/json": { schema: menuItemSelectSchema } } } },
+    responses: {
+      200: { description: "Updated", content: { "application/json": { schema: menuItemSelectSchema } } },
+      409: { description: "Duplicate item name", content: { "application/json": { schema: errorResponseSchema } } },
+    },
   }),
   async (c) => {
     const { id } = c.req.valid("param");
-    return c.json(await menuService.updateMenuItem(c.get("db"), id, c.req.valid("json")), 200);
+    try {
+      const item = await menuService.updateMenuItem(c.get("db"), id, c.req.valid("json"));
+      return c.json(item, 200);
+    } catch (err) {
+      if (err instanceof MenuError) {
+        return c.json({ error: { code: err.code, message: err.message } }, err.status as 409);
+      }
+      throw err;
+    }
   }
 );
 

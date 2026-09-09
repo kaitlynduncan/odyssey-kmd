@@ -8,40 +8,39 @@ import {
 import { useToast } from "../../../components/primitives/Toast";
 import { ORDER_STATUS_TRANSITIONS, ORDER_STATUS_LABELS, type OrderStatus } from "shared/src/orderStatus";
 
-// Feature-level hook: wraps generated mutations with the UI concerns a page
-// actually needs (cache invalidation, toasts). Pages call this, never the
-// generated hooks or `fetch` directly.
+// Same gotcha as useMenuActions: Orval's fetch client resolves (never
+// rejects) for any completed HTTP response, so mutateAsync() does NOT throw
+// just because the server returned 409/422. Every call site here checks the
+// resolved status explicitly.
+function unwrapOrThrow<T>(result: { status: number; data: any }, expectedStatus: number): T {
+  if (result.status !== expectedStatus) {
+    throw new Error(result.data?.error?.message ?? "Something went wrong");
+  }
+  return result.data as T;
+}
+
 export function useOrderActions(orderId?: string) {
   const queryClient = useQueryClient();
   const toast = useToast();
 
   const invalidateOrders = () => queryClient.invalidateQueries({ queryKey: getGetApiOrdersQueryKey() });
 
-  const statusMutation = usePatchApiOrdersIdStatus({
-    mutation: {
-      onSuccess: (_data, variables) => {
-        invalidateOrders();
-        if (variables?.id) {
-          queryClient.invalidateQueries({ queryKey: getGetApiOrdersIdQueryKey(variables.id) });
-        }
-        toast.show("Order status updated", "success");
-      },
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not update order status", "danger"),
-    },
-  });
+  const statusMutation = usePatchApiOrdersIdStatus();
+  const createMutation = usePostApiOrders();
 
-  const createMutation = usePostApiOrders({
-    mutation: {
-      onSuccess: () => {
-        invalidateOrders();
-        toast.show("Order created", "success");
-      },
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not create order", "danger"),
-    },
-  });
-
-  function updateStatus(id: string, status: OrderStatus) {
-    statusMutation.mutate({ id, data: { status } });
+  async function updateStatus(id: string, status: OrderStatus) {
+    try {
+      const result = await statusMutation.mutateAsync({ id, data: { status } });
+      unwrapOrThrow(result as any, 200);
+      invalidateOrders();
+      queryClient.invalidateQueries({ queryKey: getGetApiOrdersIdQueryKey(id) });
+      toast.show("Order status updated", "success");
+    } catch (err: any) {
+      // This is the fix that matters most here: a rejected transition
+      // (e.g. skipping straight to "completed") used to resolve silently
+      // as if it succeeded, since the fetch client doesn't throw on 409.
+      toast.show(err?.message ?? "Could not update order status", "danger");
+    }
   }
 
   function getValidNextStatuses(current: OrderStatus): OrderStatus[] {
@@ -50,7 +49,10 @@ export function useOrderActions(orderId?: string) {
 
   async function createOrder(input: { customerId?: string | null; items: { menuItemId: string; quantity: number }[] }) {
     const result = await createMutation.mutateAsync({ data: input });
-    return (result as any).data.id as string;
+    const order = unwrapOrThrow<{ id: string }>(result as any, 201);
+    invalidateOrders();
+    toast.show("Order created", "success");
+    return order.id;
   }
 
   return {

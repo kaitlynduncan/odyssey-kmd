@@ -8,45 +8,38 @@ import {
 } from "api-client";
 import { useToast } from "../../../components/primitives/Toast";
 
+// Orval's fetch client resolves (never rejects) for ANY completed HTTP
+// response, success or error — mirroring native fetch()'s own behavior of
+// only rejecting on network failure, not on non-2xx statuses. mutateAsync()
+// does NOT throw just because the server returned 409/422. Every call site
+// below explicitly checks the resolved status and throws itself when it
+// isn't the expected success code — skipping this check is what silently
+// treated a rejected duplicate-name request as a success.
+function unwrapOrThrow<T>(result: { status: number; data: any }, expectedStatus: number): T {
+  if (result.status !== expectedStatus) {
+    throw new Error(result.data?.error?.message ?? "Something went wrong");
+  }
+  return result.data as T;
+}
+
 export function useMenuActions() {
   const queryClient = useQueryClient();
   const toast = useToast();
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getGetApiMenuQueryKey() });
 
-  const createMutation = usePostApiMenuItems({
-    mutation: {
-      onSuccess: () => {
-        invalidate();
-        toast.show("Item created", "success");
-      },
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not create item", "danger"),
-    },
-  });
-
-  const updateMutation = usePatchApiMenuItemsId({
-    mutation: {
-      onSuccess: () => {
-        invalidate();
-        toast.show("Item updated", "success");
-      },
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not update item", "danger"),
-    },
-  });
-
-  const createCategoryMutation = usePostApiMenuCategories({
-    mutation: {
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not create category", "danger"),
-    },
-  });
-
+  const createMutation = usePostApiMenuItems();
+  const updateMutation = usePatchApiMenuItemsId();
+  const createCategoryMutation = usePostApiMenuCategories();
   const updateCategoryMutation = usePatchApiMenuCategoriesId({
     mutation: {
-      onError: (err: any) => toast.show(err?.body?.error?.message ?? "Could not reorder categories", "danger"),
+      onError: (err: any) => toast.show(err?.message ?? "Could not reorder categories", "danger"),
     },
   });
 
-  function saveItem(input: {
+  // Throws on failure — including HTTP-level failures like a duplicate
+  // name — so the caller can surface a field-level error, not just a toast.
+  async function saveItem(input: {
     id?: string;
     categoryId: string;
     name: string;
@@ -56,23 +49,24 @@ export function useMenuActions() {
   }) {
     if (input.id) {
       const { id, ...data } = input;
-      updateMutation.mutate({ id, data });
+      const result = await updateMutation.mutateAsync({ id, data });
+      unwrapOrThrow(result as any, 200);
     } else {
       const { id, ...data } = input;
-      createMutation.mutate({ data });
+      const result = await createMutation.mutateAsync({ data });
+      unwrapOrThrow(result as any, 201);
     }
+    invalidate();
+    toast.show(input.id ? "Item updated" : "Item created", "success");
   }
 
   async function createCategory(name: string): Promise<string> {
     const result = await createCategoryMutation.mutateAsync({ data: { name, sortOrder: 0 } });
+    const category = unwrapOrThrow<{ id: string }>(result as any, 201);
     invalidate();
-    return (result as any).data.id;
+    return category.id;
   }
 
-  // Swaps sortOrder between a category and its immediate neighbor in the
-  // given (already sorted) list, then invalidates so the new order reflects
-  // everywhere. Two sequential PATCH calls rather than a single bulk
-  // endpoint — simple and sufficient for a handful of categories.
   async function moveCategory(
     sortedCategories: { id: string; sortOrder: number }[],
     categoryId: string,

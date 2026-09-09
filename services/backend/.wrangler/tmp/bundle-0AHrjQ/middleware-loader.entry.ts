@@ -3,12 +3,12 @@
 // export dynamically through wrangler, or we can potentially let users directly
 // add them as a sort of "plugin" system.
 
-import ENTRY, { __INTERNAL_WRANGLER_MIDDLEWARE__ } from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-McMqvG/middleware-insertion-facade.js";
+import ENTRY, { __INTERNAL_WRANGLER_MIDDLEWARE__ } from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-0AHrjQ/middleware-insertion-facade.js";
 import { __facade_invoke__, __facade_register__, Dispatcher } from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/node_modules/.pnpm/wrangler@3.114.17_@cloudflare+workers-types@4.20260702.1/node_modules/wrangler/templates/middleware/common.ts";
-import type { WorkerEntrypointConstructor } from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-McMqvG/middleware-insertion-facade.js";
+import type { WorkerEntrypointConstructor } from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-0AHrjQ/middleware-insertion-facade.js";
 
 // Preserve all the exports from the worker
-export * from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-McMqvG/middleware-insertion-facade.js";
+export * from "/Users/kmduncan/odyssey-kmd/odyssey-kmd/services/backend/.wrangler/tmp/bundle-0AHrjQ/middleware-insertion-facade.js";
 
 class __Facade_ScheduledController__ implements ScheduledController {
 	readonly #noRetry: ScheduledController["noRetry"];

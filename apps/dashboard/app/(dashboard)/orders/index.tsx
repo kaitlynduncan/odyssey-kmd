@@ -11,6 +11,7 @@ import { SkeletonRows } from "@/components/primitives/Skeleton";
 import { OrderStatusBadge } from "@/components/composed/OrderStatusBadge";
 import { useGetApiOrders, useGetApiCustomers, useGetApiMenu } from "api-client";
 import { useOrderActions } from "@/features/orders/hooks/useOrderActions";
+import { useToast } from "@/components/primitives/Toast";
 import { addItemToCart, changeCartQuantity, cartTotalCents, type CartLine } from "@/features/orders/cart";
 import { formatCents } from "shared/src/money";
 import { typography, spacing, color } from "@/theme/tokens";
@@ -40,6 +41,7 @@ export default function OrdersPage() {
   const { data: customersResponse } = useGetApiCustomers();
   const { data: menuResponse } = useGetApiMenu();
   const { createOrder, isCreating } = useOrderActions();
+  const toast = useToast();
 
   const orders = response?.data?.data ?? [];
   const customers = customersResponse?.data ?? [];
@@ -64,14 +66,20 @@ export default function OrdersPage() {
     setCart((prev) => changeCartQuantity(prev, menuItemId, delta));
   }
 
-  async function handleCreateOrder() {
-    if (cart.length === 0) return;
-    const newOrderId = await createOrder({
-      customerId: customerId === WALK_IN_VALUE ? null : customerId,
-      items: cart.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
-    });
-    setDrawerOpen(false);
-    router.push(`/orders/${newOrderId}`);
+    async function handleCreateOrder() {
+      if (cart.length === 0) return;
+      try {
+        const newOrderId = await createOrder({
+          customerId: customerId === WALK_IN_VALUE ? null : customerId,
+          items: cart.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity })),
+        });
+        setDrawerOpen(false);
+        router.push(`/orders/${newOrderId}`);
+      } catch (err: any) {
+        // Drawer stays open on failure (e.g. an unavailable item) instead of
+        // closing and navigating to an order that was never actually created.
+        toast.show(err?.message ?? "Could not create order", "danger");
+      }
   }
 
   const columns: Column<any>[] = [
